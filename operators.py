@@ -8,7 +8,6 @@ import time
 # 只有在NAVIGATING/COASTING状态下才会被更新, is_active=False时状态栏不绘制任何内容
 _statusbar_state = {
     "is_active": False,
-    "speed_multiplier": 1.0,
     "current_speed": 0.0,
     "target_speed": 0.0,
 }
@@ -20,29 +19,28 @@ CLICK_TIME_THRESHOLD = 0.18      # 秒, 短于这个时长视为点击意图
 CLICK_MOVE_THRESHOLD = 4.0       # 像素, 鼠标移动超过这个距离视为导航意图
 
 # 视角
-MOUSE_SENSITIVITY = 0.0022
+MOUSE_SENSITIVITY = 0.0025
 PITCH_LIMIT = math.radians(89.0)
 
 # 移动
-BASE_MAX_SPEED = 12.0            # 滚轮倍率为1.0时的最大速度 (units/s)
-SPRINT_MULTIPLIER = 2.5
-SLOW_MULTIPLIER = 0.25           # Alt按下时的减速倍率
-DAMPING = 8.0                    # 控制加速/刹车/转向的平滑手感, 越大越灵敏
-PHYSICS_SUBSTEP = 1 / 60        # 子步进步长, 防止TIMER抖动导致位移突变
+TARGET_SPEED = 12.0              # 目标速度(units/s), 滚轮直接调整这个值
+SPRINT_MULTIPLIER = 2.5          # Shift临时倍率
+SLOW_MULTIPLIER = 0.25           # Alt临时倍率
+DAMPING = 8.0                    # 控制加速/刹车/转向的平滑手感
+PHYSICS_SUBSTEP = 1 / 60
+
+# 滚轮调速
+SPEED_STEP = 1.15                # 每次滚动的缩放比例
+SPEED_MIN = 0.1                  # 速度下限
+SPEED_MAX = 100.0                # 速度上限
 
 # 光标
-HIDE_CURSOR = False              # 导航状态下是否隐藏鼠标光标
-CURSOR_STYLE = "SCROLL_XY"      # 导航状态下的光标样式
+HIDE_CURSOR = False
+CURSOR_STYLE = "SCROLL_XY"
 
 # 惯性滑行
-COAST_STOP_THRESHOLD = 0.05      # units/s, 速度低于此值视为已停止
-COAST_MAX_DURATION = 2.0         # 秒, 滑行硬性超时保护
-
-# 滚轮速度倍率
-SPEED_MULTIPLIER_MIN = 0.1
-SPEED_MULTIPLIER_MAX = 10.0
-SPEED_MULTIPLIER_STEP = 1.15
-DEFAULT_SPEED_MULTIPLIER = 1.0
+COAST_STOP_THRESHOLD = 0.05
+COAST_MAX_DURATION = 2.0
 
 # 边界teleport留边距(像素)
 WARP_MARGIN = 20
@@ -167,17 +165,16 @@ class VIEW3D_OT_unity_walk(Operator):
 
         # 从Scene属性读取当前参数,存到实例变量,导航过程中保持一致
         scene = context.scene
-        self._base_max_speed = getattr(scene, "uw_base_max_speed", BASE_MAX_SPEED)
-        self._mouse_sensitivity = getattr(scene, "uw_mouse_sensitivity", MOUSE_SENSITIVITY)
-        self._damping = getattr(scene, "uw_damping", DAMPING)
-        self._sprint_multiplier = getattr(scene, "uw_sprint_multiplier", SPRINT_MULTIPLIER)
-        self._slow_multiplier = getattr(scene, "uw_slow_multiplier", SLOW_MULTIPLIER)
-        self._cursor_style = getattr(scene, "uw_cursor_style", CURSOR_STYLE)
-        self._warp_margin = getattr(scene, "uw_warp_margin", WARP_MARGIN)
+        self._mouse_sensitivity    = getattr(scene, "uw_mouse_sensitivity", MOUSE_SENSITIVITY)
+        self._damping              = getattr(scene, "uw_damping",            DAMPING)
+        self._sprint_multiplier    = getattr(scene, "uw_sprint_multiplier",  SPRINT_MULTIPLIER)
+        self._slow_multiplier      = getattr(scene, "uw_slow_multiplier",    SLOW_MULTIPLIER)
+        self._cursor_style         = getattr(scene, "uw_cursor_style",       CURSOR_STYLE)
+        self._warp_margin          = getattr(scene, "uw_warp_margin",        WARP_MARGIN)
         self._click_time_threshold = getattr(scene, "uw_click_time_threshold", CLICK_TIME_THRESHOLD)
         self._click_move_threshold = getattr(scene, "uw_click_move_threshold", CLICK_MOVE_THRESHOLD)
         self._coast_stop_threshold = getattr(scene, "uw_coast_stop_threshold", COAST_STOP_THRESHOLD)
-        self._coast_max_duration = getattr(scene, "uw_coast_max_duration", COAST_MAX_DURATION)
+        self._coast_max_duration   = getattr(scene, "uw_coast_max_duration",   COAST_MAX_DURATION)
 
         # 记录原始 view_distance, 退出时恢复, 防止滚轮/中键失效
         self.original_view_distance = rv3d.view_distance
@@ -192,8 +189,11 @@ class VIEW3D_OT_unity_walk(Operator):
         self.yaw = math.atan2(-forward.x, forward.y)
         self.pitch = math.asin(max(-1.0, min(1.0, forward.z)))
 
-        self.velocity = Vector((0.0, 0.0, 0.0))
-        self.speed_multiplier = DEFAULT_SPEED_MULTIPLIER
+        self.velocity      = Vector((0.0, 0.0, 0.0))
+        self._target_speed = getattr(scene, "uw_target_speed", TARGET_SPEED)
+        self._speed_step   = getattr(scene, "uw_speed_step",   SPEED_STEP)
+        self._speed_min    = getattr(scene, "uw_speed_min",    SPEED_MIN)
+        self._speed_max    = getattr(scene, "uw_speed_max",    SPEED_MAX)
 
         self.move_state = {
             "FORWARD": False,
@@ -259,7 +259,10 @@ class VIEW3D_OT_unity_walk(Operator):
                         self.move_state[key] = False
                     # 重新从Scene读取参数,用户可能在滑行期间调整了N面板
                     scene = context.scene
-                    self._base_max_speed = getattr(scene, "uw_base_max_speed", BASE_MAX_SPEED)
+                    self._target_speed = getattr(scene, "uw_target_speed", TARGET_SPEED)
+                    self._speed_step   = getattr(scene, "uw_speed_step",   SPEED_STEP)
+                    self._speed_min    = getattr(scene, "uw_speed_min",    SPEED_MIN)
+                    self._speed_max    = getattr(scene, "uw_speed_max",    SPEED_MAX)
                     self._mouse_sensitivity = getattr(scene, "uw_mouse_sensitivity", MOUSE_SENSITIVITY)
                     self._damping = getattr(scene, "uw_damping", DAMPING)
                     self._sprint_multiplier = getattr(scene, "uw_sprint_multiplier", SPRINT_MULTIPLIER)
@@ -298,13 +301,11 @@ class VIEW3D_OT_unity_walk(Operator):
                 self.warp_if_near_edge(context, event)
 
             if event.type == "WHEELUPMOUSE":
-                self.speed_multiplier = min(
-                    SPEED_MULTIPLIER_MAX, self.speed_multiplier * SPEED_MULTIPLIER_STEP
-                )
+                self._target_speed = min(self._speed_max, self._target_speed * self._speed_step)
+                context.scene.uw_target_speed = self._target_speed
             elif event.type == "WHEELDOWNMOUSE":
-                self.speed_multiplier = max(
-                    SPEED_MULTIPLIER_MIN, self.speed_multiplier / SPEED_MULTIPLIER_STEP
-                )
+                self._target_speed = max(self._speed_min, self._target_speed / self._speed_step)
+                context.scene.uw_target_speed = self._target_speed
 
             if event.type in _KEY_MAP or event.type in {
                 "LEFT_SHIFT", "RIGHT_SHIFT", "LEFT_ALT", "RIGHT_ALT", "TIMER"
@@ -424,26 +425,20 @@ class VIEW3D_OT_unity_walk(Operator):
         if desired.length > 0:
             desired.normalize()
 
-        target_speed = self._base_max_speed * self.speed_multiplier
+        target_speed = self._target_speed
         if self.move_state["SLOW"]:
             target_speed *= self._slow_multiplier
         elif self.move_state["SPRINT"]:
             target_speed *= self._sprint_multiplier
 
-        # 期望速度向量: 有方向有大小, 没有输入时为零向量(即"目标是静止")
         desired_velocity = desired * target_speed
 
-        # 指数平滑: 每帧把当前速度往目标速度拉一次
-        # smooth_factor用exp形式而不是简单的self._damping*dt, 是为了在帧率不稳定时
-        # 保持一致的手感(数学上正确的离散化指数衰减, 不受dt大小影响)
-        # 起步/刹车/转向都走同一套公式, 天然对称, 不需要clamp
         smooth_factor = 1.0 - math.exp(-self._damping * dt)
         self.velocity = self.velocity.lerp(desired_velocity, smooth_factor)
 
         self.location += self.velocity * dt
 
         _statusbar_state["is_active"] = True
-        _statusbar_state["speed_multiplier"] = self.speed_multiplier
         _statusbar_state["current_speed"] = self.velocity.length
         _statusbar_state["target_speed"] = target_speed
 
