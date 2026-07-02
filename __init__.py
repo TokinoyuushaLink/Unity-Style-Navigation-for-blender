@@ -1,5 +1,5 @@
 bl_info = {
-    "name": "Unity Walk Navigation",
+    "name": "Unity Style Walk Navigation",
     "author": "TokinoyuushaLink",
     "version": (1, 1, 0),
     "blender": (4, 2, 0),
