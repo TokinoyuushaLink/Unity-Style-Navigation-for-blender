@@ -1,5 +1,6 @@
 https://github.com/user-attachments/assets/78f21800-bf00-4829-a0e3-60fb82aa49a7
 
+Language: ![中文](https://github.com/TokinoyuushaLink/Unity-Style-Navigation-for-blender/blob/42e67b6bed68e842f83ec0ef76ff883d86ad8135/README_ZH.md)
 
 # Unity Style Walk Navigation
 
