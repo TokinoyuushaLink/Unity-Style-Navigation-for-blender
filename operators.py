@@ -4,6 +4,8 @@ from bpy.types import Operator
 import math
 import time
 
+_ADDON_PACKAGE = __package__  # 模块加载时记录包名,类方法里__package__可能丢失
+
 # 模块级共享状态: 供状态栏绘制函数读取当前导航状态(速度倍率/实时速度)
 # 只有在NAVIGATING/COASTING状态下才会被更新, is_active=False时状态栏不绘制任何内容
 _statusbar_state = {
@@ -41,6 +43,10 @@ CURSOR_STYLE = "SCROLL_XY"
 # 惯性滑行
 COAST_STOP_THRESHOLD = 0.05
 COAST_MAX_DURATION = 2.0
+
+# 触控板
+TRACKPAD_TIMEOUT = 0.3           # 秒,最后一次TRACKPADPAN后超过此时间触发滑行退出
+TRACKPAD_EXIT_THRESHOLD = 10.0   # 像素,单指累计移动超过此距离才触发退出
 
 # 边界teleport留边距(像素)
 WARP_MARGIN = 20
@@ -115,9 +121,7 @@ class VIEW3D_OT_unity_walk(Operator):
 
         moved = self.mouse_moved_distance(event)
 
-        scene = context.scene
-        click_time = getattr(scene, "uw_click_time_threshold", CLICK_TIME_THRESHOLD)
-        click_move = getattr(scene, "uw_click_move_threshold", CLICK_MOVE_THRESHOLD)
+        click_move = CLICK_MOVE_THRESHOLD
 
         # 时间判定已禁用,保留接口供后续需要时恢复
         # if event.type == "TIMER":
@@ -163,18 +167,18 @@ class VIEW3D_OT_unity_walk(Operator):
 
         self.state = "NAVIGATING"
 
-        # 从Scene属性读取当前参数,存到实例变量,导航过程中保持一致
-        scene = context.scene
-        self._mouse_sensitivity    = getattr(scene, "uw_mouse_sensitivity", MOUSE_SENSITIVITY)
-        self._damping              = getattr(scene, "uw_damping",            DAMPING)
-        self._sprint_multiplier    = getattr(scene, "uw_sprint_multiplier",  SPRINT_MULTIPLIER)
-        self._slow_multiplier      = getattr(scene, "uw_slow_multiplier",    SLOW_MULTIPLIER)
-        self._cursor_style         = getattr(scene, "uw_cursor_style",       CURSOR_STYLE)
-        self._warp_margin          = getattr(scene, "uw_warp_margin",        WARP_MARGIN)
-        self._click_time_threshold = getattr(scene, "uw_click_time_threshold", CLICK_TIME_THRESHOLD)
-        self._click_move_threshold = getattr(scene, "uw_click_move_threshold", CLICK_MOVE_THRESHOLD)
-        self._coast_stop_threshold = getattr(scene, "uw_coast_stop_threshold", COAST_STOP_THRESHOLD)
-        self._coast_max_duration   = getattr(scene, "uw_coast_max_duration",   COAST_MAX_DURATION)
+        # 从AddonPreferences读取参数
+        prefs = context.preferences.addons[_ADDON_PACKAGE].preferences
+        self._mouse_sensitivity    = prefs.mouse_sensitivity
+        self._damping              = prefs.damping
+        self._sprint_multiplier    = prefs.sprint_multiplier
+        self._slow_multiplier      = prefs.slow_multiplier
+        self._cursor_style         = prefs.cursor_style
+        self._warp_margin          = prefs.warp_margin
+        self._click_time_threshold = CLICK_TIME_THRESHOLD
+        self._click_move_threshold = CLICK_MOVE_THRESHOLD
+        self._coast_stop_threshold = prefs.coast_stop_threshold
+        self._coast_max_duration   = prefs.coast_max_duration
 
         # 记录原始 view_distance, 退出时恢复, 防止滚轮/中键失效
         self.original_view_distance = rv3d.view_distance
@@ -190,10 +194,12 @@ class VIEW3D_OT_unity_walk(Operator):
         self.pitch = math.asin(max(-1.0, min(1.0, forward.z)))
 
         self.velocity      = Vector((0.0, 0.0, 0.0))
-        self._target_speed = getattr(scene, "uw_target_speed", TARGET_SPEED)
-        self._speed_step   = getattr(scene, "uw_speed_step",   SPEED_STEP)
-        self._speed_min    = getattr(scene, "uw_speed_min",    SPEED_MIN)
-        self._speed_max    = getattr(scene, "uw_speed_max",    SPEED_MAX)
+        prefs = context.preferences.addons[_ADDON_PACKAGE].preferences
+        scene = context.scene
+        self._target_speed = getattr(scene, "uw_target_speed", prefs.target_speed)
+        self._speed_step   = prefs.speed_step
+        self._speed_min    = prefs.speed_min
+        self._speed_max    = prefs.speed_max
 
         self.move_state = {
             "FORWARD": False,
@@ -257,20 +263,21 @@ class VIEW3D_OT_unity_walk(Operator):
                     self._skip_next_mousemove = False
                     for key in self.move_state:
                         self.move_state[key] = False
-                    # 重新从Scene读取参数,用户可能在滑行期间调整了N面板
+                    # 重新从AddonPreferences读取参数
+                    prefs = context.preferences.addons[_ADDON_PACKAGE].preferences
                     scene = context.scene
-                    self._target_speed = getattr(scene, "uw_target_speed", TARGET_SPEED)
-                    self._speed_step   = getattr(scene, "uw_speed_step",   SPEED_STEP)
-                    self._speed_min    = getattr(scene, "uw_speed_min",    SPEED_MIN)
-                    self._speed_max    = getattr(scene, "uw_speed_max",    SPEED_MAX)
-                    self._mouse_sensitivity = getattr(scene, "uw_mouse_sensitivity", MOUSE_SENSITIVITY)
-                    self._damping = getattr(scene, "uw_damping", DAMPING)
-                    self._sprint_multiplier = getattr(scene, "uw_sprint_multiplier", SPRINT_MULTIPLIER)
-                    self._slow_multiplier = getattr(scene, "uw_slow_multiplier", SLOW_MULTIPLIER)
-                    self._cursor_style = getattr(scene, "uw_cursor_style", CURSOR_STYLE)
-                    self._warp_margin = getattr(scene, "uw_warp_margin", WARP_MARGIN)
-                    self._coast_stop_threshold = getattr(scene, "uw_coast_stop_threshold", COAST_STOP_THRESHOLD)
-                    self._coast_max_duration = getattr(scene, "uw_coast_max_duration", COAST_MAX_DURATION)
+                    self._target_speed      = getattr(scene, "uw_target_speed", prefs.target_speed)
+                    self._speed_step        = prefs.speed_step
+                    self._speed_min         = prefs.speed_min
+                    self._speed_max         = prefs.speed_max
+                    self._mouse_sensitivity = prefs.mouse_sensitivity
+                    self._damping           = prefs.damping
+                    self._sprint_multiplier = prefs.sprint_multiplier
+                    self._slow_multiplier   = prefs.slow_multiplier
+                    self._cursor_style      = prefs.cursor_style
+                    self._warp_margin       = prefs.warp_margin
+                    self._coast_stop_threshold = prefs.coast_stop_threshold
+                    self._coast_max_duration   = prefs.coast_max_duration
                     context.window.cursor_modal_set(self._cursor_style)
 
         if event.type == "ESC":
@@ -303,9 +310,11 @@ class VIEW3D_OT_unity_walk(Operator):
             if event.type == "WHEELUPMOUSE":
                 self._target_speed = min(self._speed_max, self._target_speed * self._speed_step)
                 context.scene.uw_target_speed = self._target_speed
+                context.preferences.addons[_ADDON_PACKAGE].preferences.target_speed = self._target_speed
             elif event.type == "WHEELDOWNMOUSE":
                 self._target_speed = max(self._speed_min, self._target_speed / self._speed_step)
                 context.scene.uw_target_speed = self._target_speed
+                context.preferences.addons[_ADDON_PACKAGE].preferences.target_speed = self._target_speed
 
             if event.type in _KEY_MAP or event.type in {
                 "LEFT_SHIFT", "RIGHT_SHIFT", "LEFT_ALT", "RIGHT_ALT", "TIMER"
@@ -380,11 +389,9 @@ class VIEW3D_OT_unity_walk(Operator):
         return min(dt, 0.5)
 
     def run_physics_substeps(self, dt):
-        # 快速路径: 正常帧dt约等于PHYSICS_SUBSTEP, 直接单次调用不走循环
         if dt <= PHYSICS_SUBSTEP:
             self.update_movement(dt)
             return
-        # 慢速路径: dt异常偏大时才拆成多个子步进
         remaining = dt
         steps = 0
         while remaining > 0 and steps < 8:
@@ -454,7 +461,6 @@ class VIEW3D_OT_unity_walk(Operator):
             try:
                 self._statusbar_area.tag_redraw()
             except ReferenceError:
-                # area可能已经被Blender释放(比如切换了工作区),重新查找
                 self._statusbar_area = None
 
     def exit_navigating(self, context):
@@ -477,6 +483,370 @@ class VIEW3D_OT_unity_walk(Operator):
         return {"FINISHED"}
 
 
+# ==================== 模块级共享函数(鼠标版和触控板版都使用) ====================
+
+def nav_init_state(op, context):
+    """初始化导航状态,从Scene属性读取参数"""
+    rv3d = context.region_data
+    region = context.region
+    scene = context.scene
+    prefs = context.preferences.addons[_ADDON_PACKAGE].preferences
+
+    op.state = "NAVIGATING"
+
+    op._mouse_sensitivity    = prefs.mouse_sensitivity
+    op._damping              = prefs.damping
+    op._sprint_multiplier    = prefs.sprint_multiplier
+    op._slow_multiplier      = prefs.slow_multiplier
+    op._cursor_style         = prefs.cursor_style
+    op._warp_margin          = prefs.warp_margin
+    op._coast_stop_threshold = prefs.coast_stop_threshold
+    op._coast_max_duration   = prefs.coast_max_duration
+
+    op.original_view_distance = rv3d.view_distance
+
+    op.location = rv3d.view_location.copy()
+    if rv3d.view_distance > 0:
+        view_dir = rv3d.view_rotation @ Vector((0.0, 0.0, -1.0))
+        op.location = rv3d.view_location - view_dir * rv3d.view_distance
+
+    rot = rv3d.view_rotation
+    forward = rot @ Vector((0.0, 0.0, -1.0))
+    op.yaw   = math.atan2(-forward.x, forward.y)
+    op.pitch = math.asin(max(-1.0, min(1.0, forward.z)))
+
+    op.velocity      = Vector((0.0, 0.0, 0.0))
+    op._target_speed = getattr(scene, "uw_target_speed", prefs.target_speed)
+    op._speed_step   = prefs.speed_step
+    op._speed_min    = prefs.speed_min
+    op._speed_max    = prefs.speed_max
+
+    op.move_state = {
+        "FORWARD": False, "BACKWARD": False,
+        "LEFT": False,    "RIGHT": False,
+        "UP": False,      "DOWN": False,
+        "SPRINT": False,  "SLOW": False,
+    }
+
+    op.region_x      = region.x
+    op.region_y      = region.y
+    op.region_width  = region.width
+    op.region_height = region.height
+
+    op._coasting          = False
+    op._coast_elapsed     = 0.0
+    op._last_tick_time    = time.perf_counter()
+    op._mousemove_accum   = 0.0  # 触控板模式单指累计移动像素
+
+    op._statusbar_area = next(
+        (a for a in context.window.screen.areas if a.type == "STATUSBAR"), None
+    )
+
+    nav_apply_to_view(op, rv3d)
+
+
+def nav_compute_dt(op):
+    now = time.perf_counter()
+    dt = now - op._last_tick_time
+    op._last_tick_time = now
+    return min(dt, 0.5)
+
+
+def nav_update_move_state(op, event):
+    if event.type in _KEY_MAP:
+        if event.value == "PRESS":
+            op.move_state[_KEY_MAP[event.type]] = True
+        elif event.value == "RELEASE":
+            op.move_state[_KEY_MAP[event.type]] = False
+    op.move_state["SPRINT"] = event.shift
+    op.move_state["SLOW"] = event.alt
+
+
+def nav_update_movement(op, dt):
+    forward = Vector((-math.sin(op.yaw), math.cos(op.yaw), 0.0))
+    right   = Vector((forward.y, -forward.x, 0.0))
+    up      = Vector((0.0, 0.0, 1.0))
+
+    desired = Vector((0.0, 0.0, 0.0))
+    if op.move_state["FORWARD"]:  desired += forward
+    if op.move_state["BACKWARD"]: desired -= forward
+    if op.move_state["RIGHT"]:    desired += right
+    if op.move_state["LEFT"]:     desired -= right
+    if op.move_state["UP"]:       desired += up
+    if op.move_state["DOWN"]:     desired -= up
+
+    if desired.length > 0:
+        desired.normalize()
+
+    target_speed = op._target_speed
+    if op.move_state["SLOW"]:
+        target_speed *= op._slow_multiplier
+    elif op.move_state["SPRINT"]:
+        target_speed *= op._sprint_multiplier
+
+    smooth_factor = 1.0 - math.exp(-op._damping * dt)
+    op.velocity = op.velocity.lerp(desired * target_speed, smooth_factor)
+    op.location += op.velocity * dt
+
+    _statusbar_state["is_active"]    = True
+    _statusbar_state["current_speed"] = op.velocity.length
+    _statusbar_state["target_speed"]  = target_speed
+
+
+def nav_run_physics_substeps(op, dt):
+    if dt <= PHYSICS_SUBSTEP:
+        nav_update_movement(op, dt)
+        return
+    remaining = dt
+    steps = 0
+    while remaining > 0 and steps < 8:
+        step = min(PHYSICS_SUBSTEP, remaining)
+        nav_update_movement(op, step)
+        remaining -= step
+        steps += 1
+
+
+def nav_apply_to_view(op, rv3d):
+    yaw_quat   = Quaternion((0.0, 0.0, 1.0), op.yaw)
+    pitch_quat = Quaternion((1.0, 0.0, 0.0), op.pitch + _PITCH_OFFSET)
+    rv3d.view_rotation = yaw_quat @ pitch_quat
+    rv3d.view_location = op.location
+    rv3d.view_distance = 0.0
+
+
+def nav_tag_statusbar_redraw(op):
+    if op._statusbar_area is not None:
+        try:
+            op._statusbar_area.tag_redraw()
+        except ReferenceError:
+            op._statusbar_area = None
+
+
+def nav_restore_view_distance(op, context):
+    """退出时恢复view_distance,防止滚轮/中键失效"""
+    rv3d = context.region_data
+    if rv3d is not None and hasattr(op, "original_view_distance"):
+        restored_distance = op.original_view_distance
+        if restored_distance > 0:
+            forward = rv3d.view_rotation @ Vector((0.0, 0.0, -1.0))
+            rv3d.view_location = op.location + forward * restored_distance
+            rv3d.view_distance = restored_distance
+
+
+class VIEW3D_OT_unity_walk_trackpad(Operator):
+    """触控板版Unity Walk导航(完全独立,不继承鼠标版)
+
+    状态机: IDLE → NAVIGATING(含_coasting子状态) → IDLE
+    - TRACKPADPAN(双指滑动) → 进入导航,控制视角
+    - MOUSEMOVE(单指移动)   → 触发带滑行的退出,回到IDLE
+    - 超时无TRACKPADPAN     → 同样触发带滑行的退出
+    - WASD → 移动, Shift → 加速, Alt → 减速, ESC → 完全退出
+    """
+
+    bl_idname = "view3d.unity_walk_trackpad"
+    bl_label = "Unity Style Walk Navigation (Trackpad)"
+    bl_options = {"REGISTER"}
+
+    def invoke(self, context, event):
+        if context.space_data is None or context.space_data.type != "VIEW_3D":
+            return {"PASS_THROUGH"}
+
+        self._timer = context.window_manager.event_timer_add(1 / 60, window=context.window)
+        context.window_manager.modal_handler_add(self)
+
+        self.state = "IDLE"
+        self._trackpad_last_time = 0.0
+        self._trackpad_timeout = TRACKPAD_TIMEOUT
+
+        return {"RUNNING_MODAL"}
+
+    def cancel(self, context):
+        """Blender内部取消时调用,只做资源清理"""
+        if hasattr(self, "_timer"):
+            context.window_manager.event_timer_remove(self._timer)
+
+    def modal(self, context, event):
+        if self.state == "IDLE":
+            return self._modal_idle(context, event)
+        return self._modal_navigating(context, event)
+
+    def _modal_idle(self, context, event):
+        if event.type == "ESC":
+            context.window_manager.event_timer_remove(self._timer)
+            return {"CANCELLED"}
+
+        # TIMER里检查开关,关闭时正常退出
+        if event.type == "TIMER":
+            try:
+                prefs = context.preferences.addons[_ADDON_PACKAGE].preferences
+                if not (prefs.allow_trackpad and prefs.use_trackpad):
+                    context.window_manager.event_timer_remove(self._timer)
+                    return {"CANCELLED"}
+            except Exception:
+                pass
+
+        if event.type == "TRACKPADPAN":
+            nav_init_state(self, context)
+            # 触控板版使用独立的sensitivity
+            self._mouse_sensitivity = context.preferences.addons[_ADDON_PACKAGE].preferences.trackpad_sensitivity
+            region = context.region
+            context.window.cursor_modal_set("NONE")
+            context.window.cursor_warp(
+                region.x + region.width // 2,
+                region.y + region.height // 2,
+            )
+            self._skip_next_mousemove = True  # cursor_warp会产生虚假MOUSEMOVE,跳过它
+            self._trackpad_last_time = time.perf_counter()
+            # 立刻消费这次TRACKPADPAN的dx/dy用于视角旋转
+            dx = event.mouse_x - event.mouse_prev_x
+            dy = event.mouse_y - event.mouse_prev_y
+            self.yaw   -= dx * self._mouse_sensitivity
+            self.pitch += dy * self._mouse_sensitivity
+            self.pitch  = max(-PITCH_LIMIT, min(PITCH_LIMIT, self.pitch))
+            return {"RUNNING_MODAL"}
+
+        return {"PASS_THROUGH"}
+
+    def _modal_navigating(self, context, event):
+        rv3d = context.region_data
+
+        if event.type == "ESC":
+            nav_restore_view_distance(self, context)
+            context.window_manager.event_timer_remove(self._timer)
+            context.window.cursor_modal_restore()
+            context.area.tag_redraw()
+            _statusbar_state["is_active"] = False
+            nav_tag_statusbar_redraw(self)
+            return {"FINISHED"}
+
+        # TRACKPADPAN → 视角旋转,刷新超时,重置单指移动累计
+        # 滑行期间再次滑动时取消滑行,重新进入导航
+        if event.type == "TRACKPADPAN":
+            self._trackpad_last_time = time.perf_counter()
+            self._mousemove_accum = 0.0
+            if self._coasting:
+                # 取消滑行,恢复导航状态
+                self._coasting = False
+                self._coast_elapsed = 0.0
+                context.window.cursor_modal_set("NONE")
+                context.window.cursor_warp(
+                    self.region_x + self.region_width // 2,
+                    self.region_y + self.region_height // 2,
+                )
+                self._skip_next_mousemove = True
+            dx = event.mouse_x - event.mouse_prev_x
+            dy = event.mouse_y - event.mouse_prev_y
+            self.yaw   -= dx * self._mouse_sensitivity
+            self.pitch += dy * self._mouse_sensitivity
+            self.pitch  = max(-PITCH_LIMIT, min(PITCH_LIMIT, self.pitch))
+
+        # TRACKPADZOOM(双指捏合) → 调速
+        if event.type == "TRACKPADZOOM" and not self._coasting:
+            dz = event.mouse_x - event.mouse_prev_x
+            if dz > 0:
+                self._target_speed = min(self._speed_max, self._target_speed * self._speed_step)
+            elif dz < 0:
+                self._target_speed = max(self._speed_min, self._target_speed / self._speed_step)
+            context.scene.uw_target_speed = self._target_speed
+            context.preferences.addons[_ADDON_PACKAGE].preferences.target_speed = self._target_speed
+
+        # MOUSEMOVE(单指移动):
+        # 导航中: 累计超过阈值触发滑行退出
+        # 滑行中: 直接显示光标(打断滑行的隐藏状态)
+        if event.type == "MOUSEMOVE":
+            if self._skip_next_mousemove:
+                self._skip_next_mousemove = False
+            elif self._coasting:
+                # 滑行期间单指移动 → 立刻显示光标
+                context.window.cursor_modal_restore()
+            else:
+                dx = event.mouse_x - event.mouse_prev_x
+                dy = event.mouse_y - event.mouse_prev_y
+                self._mousemove_accum += math.hypot(dx, dy)
+                has_input = any(
+                    self.move_state[k]
+                    for k in ("FORWARD", "BACKWARD", "LEFT", "RIGHT", "UP", "DOWN")
+                )
+                if self._mousemove_accum > TRACKPAD_EXIT_THRESHOLD and not has_input:
+                    self._coasting = True
+                    self._coast_elapsed = 0.0
+                    self._mousemove_accum = 0.0
+                    context.window.cursor_modal_restore()
+
+        if event.type in _KEY_MAP or event.type in {
+            "LEFT_SHIFT", "RIGHT_SHIFT", "LEFT_ALT", "RIGHT_ALT", "TIMER"
+        }:
+            nav_update_move_state(self, event)
+
+        if event.type == "TIMER":
+            try:
+                dt = nav_compute_dt(self)
+
+                # 超时检测: 有WASD输入时不触发
+                has_input = any(
+                    self.move_state[k]
+                    for k in ("FORWARD", "BACKWARD", "LEFT", "RIGHT", "UP", "DOWN")
+                )
+                if has_input:
+                    self._mousemove_accum = 0.0  # 按键期间重置累计,避免松键瞬间误触发
+                if (not self._coasting
+                        and not has_input
+                        and time.perf_counter() - self._trackpad_last_time
+                        > self._trackpad_timeout):
+                    self._coasting = True
+                    self._coast_elapsed = 0.0
+                    # 注意: 不在这里restore光标,等滑行完全结束后才显示
+                    # MOUSEMOVE打断时则立刻显示(见MOUSEMOVE处理)
+
+                if self._coasting:
+                    self._coast_elapsed += dt
+                    smooth_factor = 1.0 - math.exp(-self._damping * dt)
+                    self.velocity = self.velocity.lerp(Vector((0.0, 0.0, 0.0)), smooth_factor)
+                    self.location += self.velocity * dt
+
+                    # 滑行期间有WASD输入 → 取消滑行,重新进入导航
+                    has_input = any(
+                        self.move_state[k]
+                        for k in ("FORWARD", "BACKWARD", "LEFT", "RIGHT", "UP", "DOWN")
+                    )
+                    if has_input:
+                        self._coasting = False
+                        self._coast_elapsed = 0.0
+                        self._mousemove_accum = 0.0
+                        # 重新隐藏光标钳制到中央
+                        context.window.cursor_modal_set("NONE")
+                        context.window.cursor_warp(
+                            self.region_x + self.region_width // 2,
+                            self.region_y + self.region_height // 2,
+                        )
+                        self._skip_next_mousemove = True
+                    elif (self.velocity.length < self._coast_stop_threshold
+                            or self._coast_elapsed >= self._coast_max_duration):
+                        # 滑行结束:恢复view_distance,显示光标,回到IDLE
+                        nav_restore_view_distance(self, context)
+                        context.window.cursor_modal_restore()
+                        self.state = "IDLE"
+                        self._coasting = False
+                        self._coast_elapsed = 0.0
+                        _statusbar_state["is_active"] = False
+                        nav_tag_statusbar_redraw(self)
+                        context.area.tag_redraw()
+                        return {"RUNNING_MODAL"}
+                else:
+                    nav_run_physics_substeps(self, dt)
+
+                nav_apply_to_view(self, rv3d)
+                context.area.tag_redraw()
+                nav_tag_statusbar_redraw(self)
+            except Exception as e:
+                print(f"[unity_walk_trackpad] 更新出错: {e}")
+                context.window_manager.event_timer_remove(self._timer)
+                context.window.cursor_modal_restore()
+                return {"CANCELLED"}
+
+        return {"RUNNING_MODAL"}
+
+
 def draw_statusbar(self, context):
     if not _statusbar_state["is_active"]:
         return
@@ -485,4 +855,4 @@ def draw_statusbar(self, context):
     layout.label(text=f"Speed: {_statusbar_state['target_speed']:.1f} u/s")
 
 
-classes = (VIEW3D_OT_unity_walk,)
+classes = (VIEW3D_OT_unity_walk, VIEW3D_OT_unity_walk_trackpad)

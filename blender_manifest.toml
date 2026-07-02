@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+
+id = "unity_style_walk_navigation"
+version = "1.1.0"
+name = "Unity Style Walk Navigation"
+tagline = "Unity-style right-click first-person navigation for the 3D Viewport"
+maintainer = "TokinoyuushaLink"
+type = "add-on"
+
+tags = ["3D View", "Navigation"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]

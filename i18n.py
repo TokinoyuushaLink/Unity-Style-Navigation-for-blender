@@ -25,8 +25,11 @@ _LABELS = {
         "cur_scroll":       "四向箭头",
         "cur_cross":        "十字准星",
         "cur_dot":          "圆点",
-        "help_title":       "使用说明",
-        "reset_btn":        "重置参数",
+        "help_title":           "使用说明",
+        "reset_btn":            "重置参数",
+        "allow_trackpad":       "允许触控板模式",
+        "use_trackpad":         "启用触控板模式",
+        "trackpad_sensitivity": "触控板灵敏度",
     },
     "en": {
         "panel_title":      "Unity Walk",
@@ -52,8 +55,11 @@ _LABELS = {
         "cur_scroll":       "Scroll XY",
         "cur_cross":        "Crosshair",
         "cur_dot":          "Dot",
-        "help_title":       "Usage Guide",
-        "reset_btn":        "Reset Parameters",
+        "help_title":           "Usage Guide",
+        "reset_btn":            "Reset Parameters",
+        "allow_trackpad":       "Allow Trackpad Mode",
+        "use_trackpad":         "Enable Trackpad Mode",
+        "trackpad_sensitivity": "Trackpad Sensitivity",
     },
 }
 
