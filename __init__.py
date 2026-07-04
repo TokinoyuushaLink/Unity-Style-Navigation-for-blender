@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Unity Style Walk Navigation",
     "author": "TokinoyuushaLink",
-    "version": (1, 1, 0),
+    "version": (1, 1, 2),
     "blender": (4, 2, 0),
     "location": "3D View > Right Mouse Hold | N Panel > Unity Walk",
     "description": "Unity-style right-click first-person navigation with inertia",
@@ -9,7 +9,6 @@ bl_info = {
 }
 
 import bpy
-from bpy.app.handlers import persistent
 
 from .operators import (
     VIEW3D_OT_unity_walk,
@@ -25,36 +24,27 @@ from .preferences import (
     unregister_properties,
     classes as panel_classes,
 )
+from .i18n import translations_dict
 
 all_classes = operator_classes + panel_classes
 
 addon_keymaps = []
 
 
-@persistent
-def on_load_post(filepath):
-    try:
-        prefs = bpy.context.preferences.addons[__package__].preferences
-        enabled = prefs.allow_trackpad and prefs.use_trackpad
-        for km, kmi in addon_keymaps:
-            if kmi.idname == "view3d.unity_walk_trackpad":
-                kmi.active = enabled
-    except Exception:
-        pass
-
-
 def register():
+    bpy.app.translations.register(__name__, translations_dict)
+
     for cls in all_classes:
         bpy.utils.register_class(cls)
 
     register_properties()
-    bpy.app.handlers.load_post.append(on_load_post)
 
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon
     if kc:
         km = kc.keymaps.new(name="3D View", space_type="VIEW_3D")
 
+        # 鼠标版: RIGHTMOUSE触发
         kmi_mouse = km.keymap_items.new(
             VIEW3D_OT_unity_walk.bl_idname,
             type="RIGHTMOUSE",
@@ -62,7 +52,8 @@ def register():
         )
         addon_keymaps.append((km, kmi_mouse))
 
-        # 触控板版: 默认inactive,由allow_trackpad+use_trackpad双层开关控制
+        # 触控板版: TRACKPADPAN触发,默认关闭
+        # 用户可在 Edit > Preferences > Keymap 中手动启用
         kmi_pad = km.keymap_items.new(
             VIEW3D_OT_unity_walk_trackpad.bl_idname,
             type="TRACKPADPAN",
@@ -77,9 +68,6 @@ def register():
 def unregister():
     bpy.types.STATUSBAR_HT_header.remove(draw_statusbar)
 
-    if on_load_post in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(on_load_post)
-
     for km, kmi in addon_keymaps:
         km.keymap_items.remove(kmi)
     addon_keymaps.clear()
@@ -88,3 +76,5 @@ def unregister():
 
     for cls in all_classes:
         bpy.utils.unregister_class(cls)
+
+    bpy.app.translations.unregister(__name__)

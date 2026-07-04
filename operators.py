@@ -3,8 +3,20 @@ from mathutils import Vector, Quaternion
 from bpy.types import Operator
 import math
 import time
+import sys
 
-_ADDON_PACKAGE = __package__  # 模块加载时记录包名,类方法里__package__可能丢失
+_ADDON_PACKAGE = __package__
+_IS_MAC = sys.platform == "darwin"
+
+# 平台键位预设
+# Mac:  Option(alt)=调速  Command(oskey)=减速  Shift=加速
+# Win:  Ctrl=调速         Alt=减速             Shift=加速
+if _IS_MAC:
+    _SPEED_ADJUST_KEY = "alt"    # event.alt  = Option
+    _SLOW_KEY         = "oskey"  # event.oskey = Command
+else:
+    _SPEED_ADJUST_KEY = "ctrl"   # event.ctrl = Ctrl
+    _SLOW_KEY         = "alt"    # event.alt  = Alt
 
 # 模块级共享状态: 供状态栏绘制函数读取当前导航状态(速度倍率/实时速度)
 # 只有在NAVIGATING/COASTING状态下才会被更新, is_active=False时状态栏不绘制任何内容
@@ -21,7 +33,7 @@ CLICK_TIME_THRESHOLD = 0.18      # 秒, 短于这个时长视为点击意图
 CLICK_MOVE_THRESHOLD = 4.0       # 像素, 鼠标移动超过这个距离视为导航意图
 
 # 视角
-MOUSE_SENSITIVITY = 0.0025
+MOUSE_SENSITIVITY = 0.0022
 PITCH_LIMIT = math.radians(89.0)
 
 # 移动
@@ -47,6 +59,7 @@ COAST_MAX_DURATION = 2.0
 # 触控板
 TRACKPAD_TIMEOUT = 0.3           # 秒,最后一次TRACKPADPAN后超过此时间触发滑行退出
 TRACKPAD_EXIT_THRESHOLD = 10.0   # 像素,单指累计移动超过此距离才触发退出
+TRACKPAD_SPEED_PIXELS = 20.0     # 修饰键调速:每累计多少像素触发一次speed_step
 
 # 边界teleport留边距(像素)
 WARP_MARGIN = 20
@@ -316,9 +329,10 @@ class VIEW3D_OT_unity_walk(Operator):
                 context.scene.uw_target_speed = self._target_speed
                 context.preferences.addons[_ADDON_PACKAGE].preferences.target_speed = self._target_speed
 
-            if event.type in _KEY_MAP or event.type in {
-                "LEFT_SHIFT", "RIGHT_SHIFT", "LEFT_ALT", "RIGHT_ALT", "TIMER"
-            }:
+            slow_keys = {"LEFT_SHIFT", "RIGHT_SHIFT", "LEFT_ALT", "RIGHT_ALT", "TIMER"}
+            if _IS_MAC:
+                slow_keys.add("OSKEY")
+            if event.type in _KEY_MAP or event.type in slow_keys:
                 self.update_move_state(event)
 
         if event.type == "TIMER":
@@ -502,6 +516,8 @@ def nav_init_state(op, context):
     op._warp_margin          = prefs.warp_margin
     op._coast_stop_threshold = prefs.coast_stop_threshold
     op._coast_max_duration   = prefs.coast_max_duration
+    op._speed_accum          = 0.0  # 触控板调速累计像素
+    op._trackpad_speed_step  = prefs.trackpad_speed_step
 
     op.original_view_distance = rv3d.view_distance
 
@@ -559,7 +575,7 @@ def nav_update_move_state(op, event):
         elif event.value == "RELEASE":
             op.move_state[_KEY_MAP[event.type]] = False
     op.move_state["SPRINT"] = event.shift
-    op.move_state["SLOW"] = event.alt
+    op.move_state["SLOW"] = getattr(event, _SLOW_KEY)
 
 
 def nav_update_movement(op, dt):
@@ -675,19 +691,21 @@ class VIEW3D_OT_unity_walk_trackpad(Operator):
             context.window_manager.event_timer_remove(self._timer)
             return {"CANCELLED"}
 
-        # TIMER里检查开关,关闭时正常退出
-        if event.type == "TIMER":
-            try:
-                prefs = context.preferences.addons[_ADDON_PACKAGE].preferences
-                if not (prefs.allow_trackpad and prefs.use_trackpad):
-                    context.window_manager.event_timer_remove(self._timer)
-                    return {"CANCELLED"}
-            except Exception:
-                pass
-
         if event.type == "TRACKPADPAN":
+            # 检查鼠标是否在3D视口的WINDOW子区域内
+            # (N面板/Header/Toolbar等子区域不应触发导航)
+            if context.area is None or context.area.type != "VIEW_3D":
+                return {"PASS_THROUGH"}
+            viewport_region = next(
+                (r for r in context.area.regions if r.type == "WINDOW"), None
+            )
+            if viewport_region is None:
+                return {"PASS_THROUGH"}
+            if not (viewport_region.x <= event.mouse_x <= viewport_region.x + viewport_region.width
+                    and viewport_region.y <= event.mouse_y <= viewport_region.y + viewport_region.height):
+                return {"PASS_THROUGH"}
+
             nav_init_state(self, context)
-            # 触控板版使用独立的sensitivity
             self._mouse_sensitivity = context.preferences.addons[_ADDON_PACKAGE].preferences.trackpad_sensitivity
             region = context.region
             context.window.cursor_modal_set("NONE")
@@ -695,14 +713,28 @@ class VIEW3D_OT_unity_walk_trackpad(Operator):
                 region.x + region.width // 2,
                 region.y + region.height // 2,
             )
-            self._skip_next_mousemove = True  # cursor_warp会产生虚假MOUSEMOVE,跳过它
+            self._skip_next_mousemove = True
             self._trackpad_last_time = time.perf_counter()
-            # 立刻消费这次TRACKPADPAN的dx/dy用于视角旋转
-            dx = event.mouse_x - event.mouse_prev_x
-            dy = event.mouse_y - event.mouse_prev_y
-            self.yaw   -= dx * self._mouse_sensitivity
-            self.pitch += dy * self._mouse_sensitivity
-            self.pitch  = max(-PITCH_LIMIT, min(PITCH_LIMIT, self.pitch))
+            # 立刻消费第一帧(修饰键按下时调速,否则旋转视角)
+            speed_modifier = getattr(event, _SPEED_ADJUST_KEY)
+            if speed_modifier:
+                dy = event.mouse_y - event.mouse_prev_y
+                self._speed_accum += dy
+                while abs(self._speed_accum) >= TRACKPAD_SPEED_PIXELS:
+                    if self._speed_accum > 0:
+                        self._target_speed = min(self._speed_max, self._target_speed * self._trackpad_speed_step)
+                        self._speed_accum -= TRACKPAD_SPEED_PIXELS
+                    else:
+                        self._target_speed = max(self._speed_min, self._target_speed / self._trackpad_speed_step)
+                        self._speed_accum += TRACKPAD_SPEED_PIXELS
+                context.scene.uw_target_speed = self._target_speed
+                context.preferences.addons[_ADDON_PACKAGE].preferences.target_speed = self._target_speed
+            else:
+                dx = event.mouse_x - event.mouse_prev_x
+                dy = event.mouse_y - event.mouse_prev_y
+                self.yaw   -= dx * self._mouse_sensitivity
+                self.pitch += dy * self._mouse_sensitivity
+                self.pitch  = max(-PITCH_LIMIT, min(PITCH_LIMIT, self.pitch))
             return {"RUNNING_MODAL"}
 
         return {"PASS_THROUGH"}
@@ -719,13 +751,13 @@ class VIEW3D_OT_unity_walk_trackpad(Operator):
             nav_tag_statusbar_redraw(self)
             return {"FINISHED"}
 
-        # TRACKPADPAN → 视角旋转,刷新超时,重置单指移动累计
-        # 滑行期间再次滑动时取消滑行,重新进入导航
+        # TRACKPADPAN → 视角旋转或调速(按住修饰键时)
+        # Mac: Option(alt=True) + 滑动 → 调速
+        # Windows: Ctrl(ctrl=True) + 滑动 → 调速
         if event.type == "TRACKPADPAN":
             self._trackpad_last_time = time.perf_counter()
             self._mousemove_accum = 0.0
             if self._coasting:
-                # 取消滑行,恢复导航状态
                 self._coasting = False
                 self._coast_elapsed = 0.0
                 context.window.cursor_modal_set("NONE")
@@ -734,21 +766,29 @@ class VIEW3D_OT_unity_walk_trackpad(Operator):
                     self.region_y + self.region_height // 2,
                 )
                 self._skip_next_mousemove = True
-            dx = event.mouse_x - event.mouse_prev_x
-            dy = event.mouse_y - event.mouse_prev_y
-            self.yaw   -= dx * self._mouse_sensitivity
-            self.pitch += dy * self._mouse_sensitivity
-            self.pitch  = max(-PITCH_LIMIT, min(PITCH_LIMIT, self.pitch))
 
-        # TRACKPADZOOM(双指捏合) → 调速
-        if event.type == "TRACKPADZOOM" and not self._coasting:
-            dz = event.mouse_x - event.mouse_prev_x
-            if dz > 0:
-                self._target_speed = min(self._speed_max, self._target_speed * self._speed_step)
-            elif dz < 0:
-                self._target_speed = max(self._speed_min, self._target_speed / self._speed_step)
-            context.scene.uw_target_speed = self._target_speed
-            context.preferences.addons[_ADDON_PACKAGE].preferences.target_speed = self._target_speed
+            speed_modifier = getattr(event, _SPEED_ADJUST_KEY)
+            if speed_modifier:
+                # 修饰键+滑动 → 调速(累计dy达到阈值才触发一次)
+                dy = event.mouse_y - event.mouse_prev_y
+                self._speed_accum += dy
+                while abs(self._speed_accum) >= TRACKPAD_SPEED_PIXELS:
+                    if self._speed_accum > 0:
+                        self._target_speed = min(self._speed_max, self._target_speed * self._trackpad_speed_step)
+                        self._speed_accum -= TRACKPAD_SPEED_PIXELS
+                    else:
+                        self._target_speed = max(self._speed_min, self._target_speed / self._trackpad_speed_step)
+                        self._speed_accum += TRACKPAD_SPEED_PIXELS
+                context.scene.uw_target_speed = self._target_speed
+                context.preferences.addons[_ADDON_PACKAGE].preferences.target_speed = self._target_speed
+            else:
+                # 无修饰键 → 视角旋转,同时重置调速累计
+                self._speed_accum = 0.0
+                dx = event.mouse_x - event.mouse_prev_x
+                dy = event.mouse_y - event.mouse_prev_y
+                self.yaw   -= dx * self._mouse_sensitivity
+                self.pitch += dy * self._mouse_sensitivity
+                self.pitch  = max(-PITCH_LIMIT, min(PITCH_LIMIT, self.pitch))
 
         # MOUSEMOVE(单指移动):
         # 导航中: 累计超过阈值触发滑行退出
@@ -773,9 +813,10 @@ class VIEW3D_OT_unity_walk_trackpad(Operator):
                     self._mousemove_accum = 0.0
                     context.window.cursor_modal_restore()
 
-        if event.type in _KEY_MAP or event.type in {
-            "LEFT_SHIFT", "RIGHT_SHIFT", "LEFT_ALT", "RIGHT_ALT", "TIMER"
-        }:
+        slow_keys = {"LEFT_SHIFT", "RIGHT_SHIFT", "LEFT_ALT", "RIGHT_ALT", "TIMER"}
+        if _IS_MAC:
+            slow_keys.add("OSKEY")
+        if event.type in _KEY_MAP or event.type in slow_keys:
             nav_update_move_state(self, event)
 
         if event.type == "TIMER":
