@@ -154,24 +154,41 @@ class VIEW3D_OT_unity_walk(Operator):
 
     def finish_as_click(self, context):
         context.window_manager.event_timer_remove(self._timer)
-        self.call_context_menu(context)
-        return {"FINISHED"}
-
-    def call_context_menu(self, context):
+        # 타이머로 지연하여 modal operator가 먼저 종료된 후 메뉴 표시
+        # Unreal Viewport Navigation 방식 참고
+        window = context.window
+        area = context.area
+        region = context.region
+        mode = context.mode
+        menu_name = self.menu_by_mode.get(mode, "VIEW3D_MT_object_context_menu")
         wm = context.window_manager
-        blender_keyconfig = wm.keyconfigs["Blender"]
-        select_mouse = blender_keyconfig.preferences.select_mouse
+        blender_keyconfig = wm.keyconfigs.get("Blender")
+        select_mouse = blender_keyconfig.preferences.select_mouse if blender_keyconfig else "LEFT"
 
-        if select_mouse == "LEFT":
-            try:
-                bpy.ops.wm.call_menu(name=self.menu_by_mode[context.mode])
-            except (RuntimeError, KeyError):
+        def show_menu():
+            if select_mouse == "RIGHT":
                 try:
-                    bpy.ops.wm.call_panel(name=self.menu_by_mode[context.mode])
-                except (RuntimeError, KeyError):
+                    with bpy.context.temp_override(window=window, area=area, region=region):
+                        bpy.ops.view3d.select("INVOKE_DEFAULT")
+                except (RuntimeError, ReferenceError):
                     pass
-        else:
-            bpy.ops.view3d.select("INVOKE_DEFAULT")
+                return None
+            try:
+                with bpy.context.temp_override(window=window, area=area, region=region):
+                    bpy.ops.wm.call_menu("INVOKE_DEFAULT", name=menu_name)
+            except (RuntimeError, KeyError, ReferenceError):
+                try:
+                    with bpy.context.temp_override(window=window, area=area, region=region):
+                        bpy.ops.wm.call_menu(
+                            "INVOKE_DEFAULT",
+                            name="VIEW3D_MT_object_context_menu",
+                        )
+                except (RuntimeError, KeyError, ReferenceError):
+                    pass
+            return None
+
+        bpy.app.timers.register(show_menu, first_interval=0.04)
+        return {"FINISHED"}
 
     # ---------------- 切换进入导航状态 ----------------
     def start_navigating(self, context, event):
@@ -196,15 +213,32 @@ class VIEW3D_OT_unity_walk(Operator):
         # 记录原始 view_distance, 退出时恢复, 防止滚轮/中键失效
         self.original_view_distance = rv3d.view_distance
 
-        self.location = rv3d.view_location.copy()
-        if rv3d.view_distance > 0:
-            view_dir = rv3d.view_rotation @ Vector((0.0, 0.0, -1.0))
-            self.location = rv3d.view_location - view_dir * rv3d.view_distance
+        # 检测是否在camera视图
+        self._camera_mode = (rv3d.view_perspective == "CAMERA")
+        self._camera_obj = None
+        if self._camera_mode:
+            cam = context.scene.camera
+            if cam is not None:
+                self._camera_obj = cam
+                # 从camera的实际位置和旋转初始化
+                self.location = cam.matrix_world.translation.copy()
+                fwd = cam.matrix_world.to_3x3() @ Vector((0.0, 0.0, -1.0))
+                self.yaw   = math.atan2(-fwd.x, fwd.y)
+                self.pitch = math.asin(max(-1.0, min(1.0, fwd.z)))
+            else:
+                # 没有camera就当普通视图
+                self._camera_mode = False
 
-        rot = rv3d.view_rotation
-        forward = rot @ Vector((0.0, 0.0, -1.0))
-        self.yaw = math.atan2(-forward.x, forward.y)
-        self.pitch = math.asin(max(-1.0, min(1.0, forward.z)))
+        if not self._camera_mode:
+            self.location = rv3d.view_location.copy()
+            if rv3d.view_distance > 0:
+                view_dir = rv3d.view_rotation @ Vector((0.0, 0.0, -1.0))
+                self.location = rv3d.view_location - view_dir * rv3d.view_distance
+
+            rot = rv3d.view_rotation
+            forward = rot @ Vector((0.0, 0.0, -1.0))
+            self.yaw = math.atan2(-forward.x, forward.y)
+            self.pitch = math.asin(max(-1.0, min(1.0, forward.z)))
 
         self.velocity      = Vector((0.0, 0.0, 0.0))
         prefs = context.preferences.addons[_ADDON_PACKAGE].preferences
@@ -464,11 +498,20 @@ class VIEW3D_OT_unity_walk(Operator):
         _statusbar_state["target_speed"] = target_speed
 
     def apply_to_view(self, rv3d):
-        yaw_quat = Quaternion((0.0, 0.0, 1.0), self.yaw)
+        yaw_quat   = Quaternion((0.0, 0.0, 1.0), self.yaw)
         pitch_quat = Quaternion((1.0, 0.0, 0.0), self.pitch + _PITCH_OFFSET)
-        rv3d.view_rotation = yaw_quat @ pitch_quat
-        rv3d.view_location = self.location
-        rv3d.view_distance = 0.0
+        rotation   = yaw_quat @ pitch_quat
+
+        if self._camera_mode and self._camera_obj is not None:
+            try:
+                self._camera_obj.location = self.location
+                self._camera_obj.rotation_euler = rotation.to_euler()
+            except ReferenceError:
+                self._camera_mode = False
+        else:
+            rv3d.view_rotation = rotation
+            rv3d.view_location = self.location
+            rv3d.view_distance = 0.0
 
     def tag_statusbar_redraw(self):
         if self._statusbar_area is not None:
@@ -480,7 +523,10 @@ class VIEW3D_OT_unity_walk(Operator):
     def exit_navigating(self, context):
         rv3d = context.region_data
 
-        if rv3d is not None and hasattr(self, "original_view_distance"):
+        if self._camera_mode:
+            # camera模式退出时保持camera视图
+            pass
+        elif rv3d is not None and hasattr(self, "original_view_distance"):
             restored_distance = self.original_view_distance
             if restored_distance > 0:
                 forward = rv3d.view_rotation @ Vector((0.0, 0.0, -1.0))
@@ -521,15 +567,30 @@ def nav_init_state(op, context):
 
     op.original_view_distance = rv3d.view_distance
 
-    op.location = rv3d.view_location.copy()
-    if rv3d.view_distance > 0:
-        view_dir = rv3d.view_rotation @ Vector((0.0, 0.0, -1.0))
-        op.location = rv3d.view_location - view_dir * rv3d.view_distance
+    # 检测是否在camera视图
+    op._camera_mode = (rv3d.view_perspective == "CAMERA")
+    op._camera_obj  = None
+    if op._camera_mode:
+        cam = scene.camera
+        if cam is not None:
+            op._camera_obj = cam
+            op.location = cam.matrix_world.translation.copy()
+            fwd = cam.matrix_world.to_3x3() @ Vector((0.0, 0.0, -1.0))
+            op.yaw   = math.atan2(-fwd.x, fwd.y)
+            op.pitch = math.asin(max(-1.0, min(1.0, fwd.z)))
+        else:
+            op._camera_mode = False
 
-    rot = rv3d.view_rotation
-    forward = rot @ Vector((0.0, 0.0, -1.0))
-    op.yaw   = math.atan2(-forward.x, forward.y)
-    op.pitch = math.asin(max(-1.0, min(1.0, forward.z)))
+    if not op._camera_mode:
+        op.location = rv3d.view_location.copy()
+        if rv3d.view_distance > 0:
+            view_dir = rv3d.view_rotation @ Vector((0.0, 0.0, -1.0))
+            op.location = rv3d.view_location - view_dir * rv3d.view_distance
+
+        rot = rv3d.view_rotation
+        forward = rot @ Vector((0.0, 0.0, -1.0))
+        op.yaw   = math.atan2(-forward.x, forward.y)
+        op.pitch = math.asin(max(-1.0, min(1.0, forward.z)))
 
     op.velocity      = Vector((0.0, 0.0, 0.0))
     op._target_speed = getattr(scene, "uw_target_speed", prefs.target_speed)
@@ -625,9 +686,18 @@ def nav_run_physics_substeps(op, dt):
 def nav_apply_to_view(op, rv3d):
     yaw_quat   = Quaternion((0.0, 0.0, 1.0), op.yaw)
     pitch_quat = Quaternion((1.0, 0.0, 0.0), op.pitch + _PITCH_OFFSET)
-    rv3d.view_rotation = yaw_quat @ pitch_quat
-    rv3d.view_location = op.location
-    rv3d.view_distance = 0.0
+    rotation   = yaw_quat @ pitch_quat
+
+    if getattr(op, "_camera_mode", False) and op._camera_obj is not None:
+        try:
+            op._camera_obj.location = op.location
+            op._camera_obj.rotation_euler = rotation.to_euler()
+        except ReferenceError:
+            op._camera_mode = False
+    else:
+        rv3d.view_rotation = rotation
+        rv3d.view_location = op.location
+        rv3d.view_distance = 0.0
 
 
 def nav_tag_statusbar_redraw(op):
@@ -640,6 +710,8 @@ def nav_tag_statusbar_redraw(op):
 
 def nav_restore_view_distance(op, context):
     """退出时恢复view_distance,防止滚轮/中键失效"""
+    if getattr(op, "_camera_mode", False):
+        return  # camera模式下不恢复view_distance
     rv3d = context.region_data
     if rv3d is not None and hasattr(op, "original_view_distance"):
         restored_distance = op.original_view_distance
