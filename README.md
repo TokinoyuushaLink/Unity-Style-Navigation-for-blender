@@ -4,12 +4,10 @@ https://github.com/user-attachments/assets/fb08b2f4-d3f4-4ae6-8d13-65b778fa8d3f
 
 Language: ![中文](https://github.com/TokinoyuushaLink/Unity-Style-Navigation-for-blender/blob/42e67b6bed68e842f83ec0ef76ff883d86ad8135/README_ZH.md)
 
-# Unity Style Walk Navigation
+# Unity Style Walk Navigation <img width="32" height="32" alt="07c892c802f6455f674e9310a82cf8abd544adcc250fb0646306b35ee94cdb62" src="https://github.com/user-attachments/assets/de2ab594-4335-4e79-87de-c458ddaacc79" />
 
-**Version:** 1.1.2  
-**License:** GNU General Public License v3.0 or later (GPL-3.0-or-later)  
-**Author:** TokinoyuushaLink  
-**Blender:** 4.2+
+
+**Avaliable for Blender:** 4.2+
 
 ---
 
@@ -17,14 +15,12 @@ Language: ![中文](https://github.com/TokinoyuushaLink/Unity-Style-Navigation-f
 
 A Unity Editor-style first-person walk navigation for the Blender 3D Viewport, replacing the built-in Walk mode.
 
-- Enter navigation by holding right-click and moving the mouse; release to exit (with inertia coasting)
+- Enter navigation by holding right-click and moving the mouse , with inertia coasting .
 - Exponential smoothing for movement inertia — natural feel for acceleration, braking, and turning
-- Scroll wheel adjusts movement speed in real-time; the value is saved automatically
+- Scroll wheel adjusts movement speed in real-time . 
 - Trackpad support (Mac / Windows): two-finger swipe to control the view
-- All parameters are stored in global addon preferences (not per `.blend` file)
-- UI language follows Blender's interface language setting (Chinese / English)
-
----
+- All parameters are stored in global addon preferences ，rather than per `.blend` file .
+- Automatic Language switching by your blender language (Currently support Chinese and English only )
 
 ## Installation
 
@@ -38,8 +34,6 @@ Install as an Extension (the zip includes `blender_manifest.toml`):
 
 To use by placing directly in `scripts/addons`: remove `blender_manifest.toml` from the zip, extract the folder to your addons directory, restart Blender, and enable the addon from Add-ons preferences.
 
----
-
 ## Usage
 
 ### Mouse Users
@@ -47,11 +41,9 @@ To use by placing directly in `scripts/addons`: remove `blender_manifest.toml` f
 | Input                 | Action                                          |
 | --------------------- | ----------------------------------------------- |
 | RMB + Move Mouse      | Enter first-person navigation                   |
-| Release RMB           | Exit navigation (with inertia coasting)         |
-| RMB during coasting   | Re-enter navigation                             |
 | W / S / A / D / Q / E | Move Forward / Backward / Left /Right / Up Down |
 | Shift                 | Sprint                                          |
-| Alt                   | Slow / Precise movement                         |
+| Alt (Win) / Option (Mac) | Slow / Precise movement                         |
 | Scroll Up / Down      | Adjust movement speed                           |
 | ESC                   | Force exit navigation                           |
 
@@ -64,11 +56,8 @@ In `Edit > Preferences > Keymap`, search for `Unity Style Walk Navigation (Track
 | ----------------------------------------- | ---------------------------------- |
 | Two-finger swipe                          | Enter navigation and control view  |
 | Single-finger move                        | Trigger exit with coasting         |
-| Stop swiping (timeout)                    | Trigger exit with coasting         |
-| Two-finger swipe during coasting          | Resume navigation                  |
-| WASD during coasting                      | Cancel coasting, resume navigation |
-| Ctrl (Win) / Option (Mac) + swipe up/down | Adjust movement speed              |
 | W / S / A / D / Q / E                     | Move                               |
+| Ctrl (Win) / Option (Mac) + swipe up/down | Adjust movement speed              |
 | Shift                                     | Sprint                             |
 | Alt (Win) / Command (Mac)                 | Slow                               |
 | ESC                                       | Force exit immediately             |
@@ -77,40 +66,31 @@ In `Edit > Preferences > Keymap`, search for `Unity Style Walk Navigation (Track
 
 ## Parameters
 
-> Note: Hover tips (tooltips) in Blender do not support translation via the addon translation API. All tooltips are displayed in Chinese regardless of interface language. This is a Blender platform limitation shared by all addons.
+> Note: Hover tooltips in Blender do not support translation via the addon translation API. All tooltips are displayed in Chinese regardless of interface language. This is a Blender platform limitation shared by all addons , detailed information have listed below .
 
 ### N Panel (View tab)
 
 | Parameter            | Description                                                  |
 | -------------------- | ------------------------------------------------------------ |
-| Speed                | Target movement speed (units/sec). The scroll wheel adjusts this in real-time and saves automatically. Shift/Alt/Command apply temporary multipliers without changing this value. |
-| Scroll Step          | Speed scaling per scroll tick (default 1.15 = ±15%). Multiplicative: scroll up × value, scroll down ÷ value. |
-| Mouse Sensitivity    | View rotation per pixel of mouse movement (radians). Higher = faster rotation. |
-| Accel/Brake Feel     | Exponential decay smoothing: `factor = 1 - e^(-value × dt)`. Higher = snappier; lower = more drift. |
-| Trackpad Sensitivity | View rotation per pixel of two-finger swipe. Independent from mouse sensitivity. |
-| Trackpad Speed Step  | Speed scaling per trigger when using modifier+swipe. Same as Scroll Step but triggered every 20px of accumulated swipe distance. |
+| Speed                | Target movement speed (units/sec).<br />Shift/Alt/Command apply temporary multipliers without changing this value. |
+| Scroll Step          | Speed scaling per scroll tick (default 1.15 = ±15%). <br />Multiplicative: scroll up × value, scroll down ÷ value. |
+| Mouse Sensitivity    | View rotation per pixel of mouse movement (radians). <br />Higher = faster rotation. |
+| Accel/Brake Feel     | Exponential decay smoothing: `factor = 1 - e^(-value × dt)`. <br />Higher = snappier; lower = more drift. |
+| Trackpad Sensitivity | View rotation per pixel of two-finger swipe. <br />Independent from mouse sensitivity. |
+| Trackpad Speed Step  | Speed scaling per trigger when using modifier+swipe. <br />Same as Scroll Step but triggered every 20px of accumulated swipe distance. |
 
-### AddonPreferences (Global Settings)
 
-Expand the addon entry in Add-ons to access:
-
-- **Allow Trackpad Mode**: Enable trackpad navigation globally
-- Quick reference keymap table (platform-specific: Mac or Windows)
-- **Reset Parameters**: Restore all parameters to defaults
-
-The collapsible section in the N panel exposes additional parameters:
+Preferences section in N panel exposes additional parameters:
 
 | Parameter         | Description                                                  |
 | ----------------- | ------------------------------------------------------------ |
-| Sprint Multiplier | Temporary speed multiplier while holding Shift. Applied on top of target speed. |
-| Slow Multiplier   | Temporary speed multiplier while holding Alt (Win) or Command (Mac). Overrides Sprint. |
+| Sprint Multiplier | Speed multiplier while holding Shift. <br />Applied on top of target speed. |
+| Slow Multiplier   | Speed multiplier while holding Alt (Win) or Command (Mac).|
 | Min / Max Speed   | Clamp range for scroll wheel speed adjustment.               |
-| Cursor Style      | Cursor appearance during navigation: Hidden, Scroll XY, Crosshair, or Dot. |
-| Edge Margin (px)  | Pixels from viewport edge to trigger cursor teleport to opposite side. Set 0 to disable. |
+| Cursor Style      | Cursor appearance during navigation|
+| Edge Margin (px)  | Pixels from viewport edge to trigger cursor teleport to opposite side.|
 | Stop Threshold    | Coasting ends when speed drops below this value (units/sec). |
 | Max Duration (s)  | Hard time limit for coasting to prevent infinite drift.      |
-
----
 
 ## Known Issues
 
@@ -120,25 +100,22 @@ Swiping outside the 3D Viewport (Properties, Outliner, etc.) no longer triggers 
 
 ### Windows trackpad: coasting cannot be interrupted by swiping
 
-On Windows, two-finger swiping during inertia coasting does not resume navigation — you must wait for coasting to finish first. This does not occur on macOS. The cause is likely a difference in how `TRACKPADPAN` events are delivered between platforms.
+On Windows, two-finger swiping during inertia coasting does not resume navigation — you must wait for coasting to finish first. The cause is likely a difference in how `TRACKPADPAN` events are delivered between platforms.
 
-### Windows trackpad: inertia interrupted by keyboard input
+### Mac trackpad: inertia interrupted by keyboard input
 
-On Windows, the system-level trackpad momentum (`TRACKPADPAN` trailing events) is interrupted when a keyboard key is pressed, causing the view to stop abruptly. macOS trackpad experience is significantly better.
+On Mac, the system-level trackpad momentum (`TRACKPADPAN` trailing events) is interrupted when a keyboard key is pressed, causing the view to stop abruptly.
 
 ### Blender 4.5 + Vulkan stuttering (Windows)
 
-Using Blender 4.5.x with the Vulkan rendering backend on Windows may cause noticeable stuttering during navigation. Switching to the OpenGL backend, or using Blender 4.2.x, is recommended.
-
----
+Using Blender 4.5.x with the Vulkan rendering backend on Windows may cause noticeable stuttering during navigation. Switching to the OpenGL backend, or using Blender 4.2.x, might solve the problem .
 
 ## Platform Support
 
 | Platform                       | Mouse Navigation | Trackpad Navigation                          |
 | ------------------------------ | ---------------- | -------------------------------------------- |
-| Windows + Blender 4.2 (OpenGL) | ✅ Works well     | ⚠️ Functional, coasting cannot be interrupted |
-| Windows + Blender 4.5 (Vulkan) | ⚠️ Stuttering     | ⚠️ Stuttering, coasting cannot be interrupted |
-| macOS + Blender 4.2+           | ✅ Works well     | ✅ Works well                                 |
+| Windows + Blender 4.2 (OpenGL) | ✅ Works well     | ⚠️ Coasting cannot be interrupted |
+| macOS + Blender 4.2+           | ✅ Works well     | ⚠️ inertia interrupted by keyboard input    |
 
 ---
 
