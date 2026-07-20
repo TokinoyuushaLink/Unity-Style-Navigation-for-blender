@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Unity Style Walk Navigation",
     "author": "TokinoyuushaLink",
-    "version": (1, 2, 0),
+    "version": (1, 3, 0),
     "blender": (4, 2, 0),
     "location": "3D View > Right Mouse Hold | N Panel > Unity Walk",
     "description": "Unity-style right-click first-person navigation with inertia",
@@ -13,6 +13,7 @@ import bpy
 from .operators import (
     VIEW3D_OT_unity_walk,
     VIEW3D_OT_unity_walk_trackpad,
+    VIEW3D_OT_unity_walk_ortho,
     draw_statusbar,
     classes as operator_classes,
 )
@@ -20,8 +21,6 @@ from .preferences import (
     UnityWalkPreferences,
     UW_OT_reset_params,
     VIEW3D_PT_unity_walk,
-    register_properties,
-    unregister_properties,
     classes as panel_classes,
 )
 from .i18n import translations_dict
@@ -67,8 +66,6 @@ def register():
     for cls in all_classes:
         bpy.utils.register_class(cls)
 
-    register_properties()
-
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon
     if kc:
@@ -79,6 +76,15 @@ def register():
                 region_type=region_type,
             )
             # head=True: 确保我们的operator在原生右键菜单之前处理事件
+            # 正交版优先注册（head=True先注册先处理），invoke()里检查ORTHO自动过滤
+            kmi_ortho = km.keymap_items.new(
+                VIEW3D_OT_unity_walk_ortho.bl_idname,
+                type="RIGHTMOUSE",
+                value="PRESS",
+                head=True,
+            )
+            addon_keymaps.append((km, kmi_ortho))
+
             kmi_mouse = km.keymap_items.new(
                 VIEW3D_OT_unity_walk.bl_idname,
                 type="RIGHTMOUSE",
@@ -109,8 +115,6 @@ def unregister():
         except (ReferenceError, RuntimeError):
             pass
     addon_keymaps.clear()
-
-    unregister_properties()
 
     for cls in all_classes:
         bpy.utils.unregister_class(cls)
