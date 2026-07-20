@@ -10,6 +10,7 @@ from mathutils import Vector
 from bpy.types import Operator
 
 from . import _statusbar_state, ADDON_PACKAGE
+from . import navigation_core as _nav_core
 from .navigation_core import (
     _KEY_MAP, _IS_MAC,
     CLICK_MOVE_THRESHOLD,
@@ -142,8 +143,7 @@ class VIEW3D_OT_unity_walk(Operator):
                         self.move_state[key] = False
                     # 重新从AddonPreferences读取参数
                     prefs = context.preferences.addons[ADDON_PACKAGE].preferences
-                    scene = context.scene
-                    self._target_speed      = getattr(scene, "uw_target_speed", prefs.target_speed)
+                    self._target_speed      = _nav_core._session_target_speed if _nav_core._session_target_speed is not None else prefs.target_speed
                     self._speed_step        = prefs.speed_step
                     self._speed_min         = prefs.speed_min
                     self._speed_max         = prefs.speed_max

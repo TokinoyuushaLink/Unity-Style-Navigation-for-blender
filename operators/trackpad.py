@@ -19,7 +19,7 @@ from .navigation_core import (
     nav_run_physics_substeps, nav_apply_to_view, nav_tag_statusbar_redraw,
     nav_restore_view_distance,
     nav_update_ortho_move_state, nav_update_ortho_movement,
-    set_session_view_space,
+    set_session_view_space, set_session_target_speed,
 )
 
 class VIEW3D_OT_unity_walk_trackpad(Operator):
@@ -114,7 +114,8 @@ class VIEW3D_OT_unity_walk_trackpad(Operator):
                     else:
                         self._target_speed = max(self._speed_min, self._target_speed / self._trackpad_speed_step)
                         self._speed_accum += TRACKPAD_SPEED_PIXELS
-                context.scene.uw_target_speed = self._target_speed
+                set_session_target_speed(self._target_speed)
+                context.preferences.addons[ADDON_PACKAGE].preferences.target_speed = self._target_speed
                 context.preferences.addons[ADDON_PACKAGE].preferences.target_speed = self._target_speed
             else:
                 dx = event.mouse_x - event.mouse_prev_x
@@ -170,7 +171,8 @@ class VIEW3D_OT_unity_walk_trackpad(Operator):
                     else:
                         self._target_speed = max(self._speed_min, self._target_speed / self._trackpad_speed_step)
                         self._speed_accum += TRACKPAD_SPEED_PIXELS
-                context.scene.uw_target_speed = self._target_speed
+                set_session_target_speed(self._target_speed)
+                context.preferences.addons[ADDON_PACKAGE].preferences.target_speed = self._target_speed
                 context.preferences.addons[ADDON_PACKAGE].preferences.target_speed = self._target_speed
             else:
                 # 无修饰键 → 视角旋转,同时重置调速累计
